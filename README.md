@@ -9,7 +9,7 @@ MicroSeg started as an early personal project — a local PySide desktop tool th
 ![Frontend: Vue 3 + Three.js](https://img.shields.io/badge/frontend-Vue%203%20%2B%20Three.js-42b883.svg)
 ![Deploy: Docker Compose](https://img.shields.io/badge/deploy-Docker%20Compose-2496ed.svg)
 
-[简体中文](#简体中文) · [English](#english)
+[简体中文](#简体中文) · [English](#english)· [Preview](#Preview)
 
 </div>
 
@@ -256,3 +256,9 @@ Full legal text in [\`LICENSE\`](LICENSE) or on the official CC page.
 ### Acknowledgements
 
 Originally a personal early-stage project; this version was refactored and optimized with AI assistance. Provided AS IS, without warranty of any kind.
+
+### Preview
+<img width="1719" height="1200" alt="image" src="https://github.com/user-attachments/assets/ba157506-568c-40ed-93d3-5c3291e8ded5" />
+<img width="1719" height="1200" alt="image" src="https://github.com/user-attachments/assets/bb46ab6a-d61a-4bb7-a3fd-f709e6705f29" />
+
+
