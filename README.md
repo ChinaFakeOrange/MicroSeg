@@ -258,7 +258,8 @@ Full legal text in [\`LICENSE\`](LICENSE) or on the official CC page.
 Originally a personal early-stage project; this version was refactored and optimized with AI assistance. Provided AS IS, without warranty of any kind.
 
 ### Preview
-<img width="1719" height="1200" alt="image" src="https://github.com/user-attachments/assets/ba157506-568c-40ed-93d3-5c3291e8ded5" />
-<img width="1719" height="1200" alt="image" src="https://github.com/user-attachments/assets/bb46ab6a-d61a-4bb7-a3fd-f709e6705f29" />
+Here is some example, not for showing the accuracy, it is just the presenting how it works
+<img width="2259" height="1200" alt="image" src="https://github.com/user-attachments/assets/5d130f82-749e-4974-9b45-ab35158408ef" />
+
 
 
