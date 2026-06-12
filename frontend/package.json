@@ -1,0 +1,22 @@
+{
+  "name": "microseg-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser UI for MicroSeg — microscopic image annotation, training, morphometry, 3D and percolation.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 8080"
+  },
+  "dependencies": {
+    "pinia": "^2.3.0",
+    "three": "^0.172.0",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^6.0.7"
+  }
+}

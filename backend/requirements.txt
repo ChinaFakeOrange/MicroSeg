@@ -1,0 +1,25 @@
+# MicroSeg — core backend dependencies (API + scientific algorithms).
+# This set is CPU-only and is enough to run the API, the interactive
+# segmenter, morphometry, percolation and 3D meshing. Deep-learning training
+# / inference additionally needs requirements-ml.txt.
+
+# --- web framework / async task queue ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.10.4
+pydantic-settings==2.7.1
+celery==5.4.0
+redis==5.2.1
+websockets==14.1
+
+# --- scientific core ---
+numpy==2.2.1
+scipy==1.15.0
+scikit-image==0.25.0
+scikit-learn==1.6.1
+lightgbm==4.6.0
+SimpleITK==2.4.1
+Pillow==11.1.0
+joblib==1.4.2
+PyYAML==6.0.2

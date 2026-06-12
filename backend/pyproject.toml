@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "microseg"
+version = "1.0.0"
+description = "Browser-based microscopic image annotation, training, inference, morphometry, 3D reconstruction and percolation simulation."
+readme = "../README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Noah" }]
+keywords = ["microscopy", "segmentation", "annotation", "percolation", "morphometry", "deep-learning"]
+
+# Runtime deps are pinned in requirements.txt / requirements-ml.txt to keep the
+# CPU API image lean and the GPU worker image separate. This list mirrors the
+# core set for `pip install .` convenience.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "python-multipart>=0.0.20",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "celery>=5.4",
+    "redis>=5.2",
+    "numpy>=2.2",
+    "scipy>=1.15",
+    "scikit-image>=0.25",
+    "scikit-learn>=1.6",
+    "lightgbm>=4.6",
+    "SimpleITK>=2.4",
+    "Pillow>=11",
+    "joblib>=1.4",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+ml = [
+    "torch>=2.5",
+    "torchvision>=0.20",
+    "segmentation-models-pytorch>=0.4",
+    "ultralytics>=8.3",
+]
+dev = ["pytest>=8.3", "httpx>=0.28", "ruff>=0.8"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

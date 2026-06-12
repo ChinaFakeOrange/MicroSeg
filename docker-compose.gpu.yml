@@ -1,0 +1,26 @@
+# ===========================================================================
+# MicroSeg — GPU overlay.
+# Replaces the worker with the CUDA/ML image so training and neural inference
+# run on the GPU. Requires the NVIDIA Container Toolkit on the host.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+# ===========================================================================
+services:
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.gpu
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      MICROSEG_REDIS_URL: redis://redis:6379/0
+      MICROSEG_CELERY_BROKER_URL: redis://redis:6379/1
+      MICROSEG_CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MICROSEG_DATA_DIR: /data
+      MICROSEG_DEVICE: cuda

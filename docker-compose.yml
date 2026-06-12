@@ -1,0 +1,72 @@
+# ===========================================================================
+# MicroSeg — CPU compose stack.
+#   redis     broker + result/event backend
+#   api       FastAPI (REST + task WebSocket)
+#   worker    Celery worker (lightweight jobs: segment/morphometry/percolation/mesh)
+#   frontend  nginx serving the SPA, proxying /api -> api
+#
+# For GPU training/inference, overlay docker-compose.gpu.yml (see Makefile).
+# ===========================================================================
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MICROSEG_REDIS_URL: redis://redis:6379/0
+      MICROSEG_CELERY_BROKER_URL: redis://redis:6379/1
+      MICROSEG_CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MICROSEG_DATA_DIR: /data
+    volumes:
+      - microseg-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MICROSEG_REDIS_URL: redis://redis:6379/0
+      MICROSEG_CELERY_BROKER_URL: redis://redis:6379/1
+      MICROSEG_CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MICROSEG_DATA_DIR: /data
+    volumes:
+      - microseg-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=2
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+volumes:
+  microseg-data:
+  redis-data:

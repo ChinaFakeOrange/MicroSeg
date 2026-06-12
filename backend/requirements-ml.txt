@@ -1,0 +1,17 @@
+# MicroSeg — deep-learning dependencies (training + neural inference).
+#
+# Installed on top of requirements.txt for the worker / GPU image. Kept
+# separate because torch is large and the API container does not need it.
+#
+# For CUDA wheels, install torch/torchvision from the official index, e.g.:
+#   pip install torch==2.5.1 torchvision==0.20.1 \
+#       --index-url https://download.pytorch.org/whl/cu124
+# The Dockerfile.gpu does exactly this. The lines below pull the default
+# (CPU or platform-default) wheels suitable for a CPU worker.
+
+torch==2.5.1
+torchvision==0.20.1
+segmentation-models-pytorch==0.4.0
+ultralytics==8.3.55
+albumentations==1.4.24
+opencv-python-headless==4.10.0.84

@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------------------
+# MicroSeg backend — GPU worker image.
+# CUDA runtime + the full deep-learning stack so the Celery worker can train
+# and run neural inference on a GPU. Use this image for the `worker` service in
+# docker-compose.gpu.yml; the API can keep using the lean CPU image.
+# ---------------------------------------------------------------------------
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    MICROSEG_DATA_DIR=/data
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 python3-pip python3.11-venv python3.11-dev \
+    build-essential \
+    libgomp1 libglib2.0-0 libgl1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python
+
+WORKDIR /app
+
+COPY requirements.txt requirements-ml.txt ./
+RUN python -m pip install --upgrade pip && pip install -r requirements.txt
+
+# CUDA-enabled torch wheels from the official index, then the rest of the ML stack.
+RUN pip install torch==2.5.1 torchvision==0.20.1 \
+        --index-url https://download.pytorch.org/whl/cu124 \
+    && pip install segmentation-models-pytorch==0.4.0 ultralytics==8.3.55 \
+        albumentations==1.4.24 opencv-python-headless==4.10.0.84
+
+COPY app ./app
+
+RUN useradd -m runner && mkdir -p /data && chown -R runner:runner /data /app
+USER runner
+
+# This image is meant to run the worker; compose sets the command. Default to it.
+CMD ["celery", "-A", "app.workers.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=1"]

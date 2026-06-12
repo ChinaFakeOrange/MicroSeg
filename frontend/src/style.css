@@ -1,0 +1,203 @@
+/* ===========================================================================
+   MicroSeg design system
+   ---------------------------------------------------------------------------
+   Subject: a precision lab instrument for microscopy image analysis.
+   Motif:  immunofluorescence channels — cyan + magenta are literal microscopy
+           stain colours, carried through as the product's signature accents
+           against a dark "viewport" workspace. Data is rendered in monospace,
+           like an instrument readout. Boldness lives in the fluorescence motif;
+           everything else stays quiet.
+   =========================================================================== */
+
+:root {
+  /* --- viewport / surfaces (dark field) --- */
+  --bg: #0c0f15;
+  --bg-deep: #080a0e;
+  --surface: #141925;
+  --surface-2: #1b2230;
+  --surface-3: #232c3d;
+  --line: #2a3344;
+  --line-soft: #1f2735;
+
+  /* --- ink --- */
+  --ink: #e8edf5;
+  --ink-soft: #9aa6ba;
+  --ink-faint: #5d6779;
+
+  /* --- fluorescence channels (signature) --- */
+  --cyan: #2fe6cf;          /* primary action / FITC-like channel */
+  --cyan-deep: #16b3a0;
+  --magenta: #f0519e;       /* highlight / percolation front / stain channel */
+  --magenta-deep: #c43b7e;
+  --violet: #8b7bf0;        /* third channel / training */
+
+  /* --- status --- */
+  --amber: #f2b441;         /* running */
+  --green: #4fd178;         /* done */
+  --red: #f0604d;           /* error / cancel */
+
+  /* --- glows --- */
+  --glow-cyan: 0 0 0 1px rgba(47, 230, 207, 0.35), 0 0 24px -6px rgba(47, 230, 207, 0.5);
+  --glow-magenta: 0 0 24px -8px rgba(240, 81, 158, 0.6);
+
+  /* --- type --- */
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* --- geometry --- */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --r-pill: 999px;
+
+  --shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(47, 230, 207, 0.06), transparent 60%),
+    radial-gradient(900px 500px at 0% 110%, rgba(240, 81, 158, 0.05), transparent 55%),
+    var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+a { color: inherit; text-decoration: none; }
+
+button, input, select, textarea { font-family: inherit; font-size: inherit; }
+
+/* monospace data readout — used for every metric, id and coordinate */
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* eyebrow / instrument label */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* --- buttons --- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 500;
+  transition: border-color 0.15s, background 0.15s, transform 0.05s;
+}
+.btn:hover { border-color: var(--cyan-deep); background: var(--surface-3); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+.btn-primary {
+  background: linear-gradient(180deg, var(--cyan), var(--cyan-deep));
+  border-color: transparent;
+  color: #06201d;
+  font-weight: 600;
+}
+.btn-primary:hover { box-shadow: var(--glow-cyan); background: linear-gradient(180deg, var(--cyan), var(--cyan-deep)); }
+
+.btn-ghost { background: transparent; border-color: transparent; color: var(--ink-soft); }
+.btn-ghost:hover { background: var(--surface-2); border-color: var(--line); color: var(--ink); }
+
+.btn-danger:hover { border-color: var(--red); color: var(--red); background: var(--surface-3); }
+
+.btn-sm { padding: 5px 10px; font-size: 13px; }
+
+/* --- inputs --- */
+.field {
+  width: 100%;
+  padding: 9px 12px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  transition: border-color 0.15s;
+}
+.field:focus { outline: none; border-color: var(--cyan-deep); box-shadow: 0 0 0 3px rgba(47, 230, 207, 0.12); }
+label.lbl { display: block; font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; }
+
+/* --- panel --- */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+/* --- viewport: a dark instrument stage with a faint calibration grid --- */
+.viewport {
+  position: relative;
+  background:
+    linear-gradient(rgba(47, 230, 207, 0.04) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(90deg, rgba(47, 230, 207, 0.04) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--bg-deep);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* status dot */
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot.queued { background: var(--ink-faint); }
+.dot.running { background: var(--amber); box-shadow: 0 0 10px var(--amber); animation: pulse 1.2s var(--ease) infinite; }
+.dot.done { background: var(--green); }
+.dot.error, .dot.cancelled { background: var(--red); }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* badge */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  background: var(--surface-2);
+}
+
+/* scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 8px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--line); }
+
+/* utility */
+.row { display: flex; align-items: center; }
+.col { display: flex; flex-direction: column; }
+.gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; }
+.muted { color: var(--ink-soft); }
+.faint { color: var(--ink-faint); }
+.spacer { flex: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
