@@ -40,7 +40,7 @@ def segment(project_id: str, body: SegmentJob):
     _require_project(project_id)
     strokes = {k: [s.model_dump() for s in v] for k, v in body.strokes_by_image.items()}
     return _enqueue("interactive_segment", project_id, jobs.interactive_segment,
-                    project_id, body.image_ids, strokes)
+                    project_id, body.image_ids, strokes, body.scope, body.export)
 
 
 @router.post("/projects/{project_id}/morphometry")

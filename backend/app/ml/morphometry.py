@@ -58,14 +58,19 @@ def _binary_from_labels(label_map: np.ndarray, target_label: int | None) -> np.n
 
 
 def analyze(label_map: np.ndarray, config: MorphometryConfig | None = None) -> MorphometryResult:
-    """Compute per-object morphometry for a 2D segmentation."""
+    """Compute per-object morphometry for a 2D **or 3D** segmentation.
+
+    For 3D volumes ``area`` is the object volume and ``perimeter`` is the surface
+    area; an extra ``centroid_z`` column is added.
+    """
     if sitk is None:
         raise RuntimeError("SimpleITK is required for morphometry")
     config = config or MorphometryConfig()
 
     binary = _binary_from_labels(np.asarray(label_map), config.target_label)
+    ndim = binary.ndim
     image = sitk.GetImageFromArray(binary)
-    image.SetSpacing((config.spacing, config.spacing))
+    image.SetSpacing(tuple([config.spacing] * ndim))
 
     if config.watershed:
         gradient = sitk.GradientMagnitude(sitk.Cast(image, sitk.sitkFloat32))
@@ -84,13 +89,13 @@ def analyze(label_map: np.ndarray, config: MorphometryConfig | None = None) -> M
 
     rows: List[Dict[str, float]] = []
     for idx, lbl in enumerate(stats.GetLabels()):
-        area = stats.GetPhysicalSize(lbl)
+        area = stats.GetPhysicalSize(lbl)        # area (2D) or volume (3D)
         if area < config.min_area:
             continue
         perimeter = stats.GetPerimeter(lbl) * config.spacing
         esp = stats.GetEquivalentSphericalPerimeter(lbl)
-        cx, cy = stats.GetCentroid(lbl)
-        rows.append({
+        c = stats.GetCentroid(lbl)
+        row = {
             "object": idx,
             "area": area,
             "ed": stats.GetEquivalentSphericalRadius(lbl) * 2.0,
@@ -98,14 +103,19 @@ def analyze(label_map: np.ndarray, config: MorphometryConfig | None = None) -> M
             "perimeter": perimeter,
             "rugosity": (esp / perimeter) if perimeter else 0.0,
             "cpc": stats.GetPerimeter(lbl),
-            "centroid_x": cx,
-            "centroid_y": cy,
+            "centroid_x": c[0],
+            "centroid_y": c[1] if len(c) > 1 else 0.0,
             "elongation": stats.GetElongation(lbl),
             "roundness": stats.GetRoundness(lbl),
             "feret_diameter": stats.GetFeretDiameter(lbl),
-        })
+        }
+        if ndim >= 3:
+            row["centroid_z"] = c[2]
+        rows.append(row)
 
-    return MorphometryResult(rows=rows, summary=_summarize(rows))
+    result = MorphometryResult(rows=rows, summary=_summarize(rows))
+    result.summary["ndim"] = ndim
+    return result
 
 
 def _summarize(rows: List[Dict[str, float]]) -> Dict[str, float]:

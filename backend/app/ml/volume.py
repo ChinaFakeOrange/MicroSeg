@@ -78,8 +78,30 @@ def isosurface_mesh(
         field = data.astype(np.float32)
         level = threshold if threshold is not None else float((field.max() + field.min()) / 2)
 
+    # marching_cubes needs a 3D field that is at least 2 voxels on every axis.
+    # A project with a single image yields a depth-1 volume; extrude that slice
+    # into a thin slab so it can still be reconstructed and viewed in 3D.
+    if field.ndim == 2:
+        field = field[None, ...]
+    if field.shape[0] == 1:
+        depth = max(2, min(24, int(round(0.02 * max(field.shape[1:])))))
+        field = np.repeat(field, depth, axis=0)
+    # Pad a one-voxel background border so the extracted surface is closed
+    # (and any still-short axis reaches the required minimum size).
+    field = np.pad(field, 1, mode="constant", constant_values=float(field.min()))
+
     if smooth:
         field = ndi.gaussian_filter(field, sigma=1.0)
+
+    # If the chosen label/threshold has no boundary in the volume the surface is
+    # undefined; fail with a clear, actionable message instead of a cryptic one.
+    if not (float(field.min()) < level < float(field.max())):
+        what = f"label {label}" if (volume.is_labels and label is not None) else "threshold"
+        raise ValueError(
+            f"No surface to extract for the selected {what}: it has no voxels (or fills "
+            f"the whole volume) in these masks. Run segmentation first, or pick a class "
+            f"that actually appears in the masks."
+        )
 
     verts, faces, normals, _ = measure.marching_cubes(
         field, level=level, spacing=volume.spacing, step_size=step_size,

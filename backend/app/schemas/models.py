@@ -55,12 +55,34 @@ class AnnotationIn(BaseModel):
 
 # --------------------------------------------------------------------- jobs
 class SegmentJob(BaseModel):
-    image_ids: List[str]
-    strokes_by_image: Dict[str, List[Scribble]]
+    # Defaults reproduce the original "label every uploaded image from all
+    # existing scribbles": image_ids=None -> all images; empty strokes ->
+    # the saved annotations on disk are used as training data.
+    image_ids: Optional[List[str]] = None
+    strokes_by_image: Dict[str, List[Scribble]] = {}
+    use_saved: bool = True
+    # scope = "all" labels every image; "rest" labels only the unselected
+    # images (the ones not used for annotation). export bundles a results zip.
+    scope: str = Field("all", pattern="^(all|rest|selected)$")
+    export: bool = False
+
+
+class ClassUpdate(BaseModel):
+    classes: List[ClassDef]
+
+
+class MaskEdit(BaseModel):
+    png_base64: str
+
+
+class SelectionUpdate(BaseModel):
+    ids: List[str]
+    selected: bool
 
 
 class MorphometryJob(BaseModel):
-    image_ids: List[str]
+    image_ids: List[str] = []
+    source: str = Field("image", pattern="^(image|volume)$")
     spacing: float = 1.0
     watershed: bool = True
     watershed_level: float = 0.1
@@ -69,7 +91,8 @@ class MorphometryJob(BaseModel):
 
 
 class PercolationJob(BaseModel):
-    image_id: str
+    image_id: Optional[str] = None
+    source: str = Field("image", pattern="^(image|volume)$")
     pore_label: Optional[int] = None
     inlet_axis: int = 0
     inlet_side: str = Field("low", pattern="^(low|high)$")
@@ -95,11 +118,14 @@ class TrainJob(BaseModel):
 
 
 class InferenceJob(BaseModel):
-    kind: str = Field("segmentation", pattern="^(segmentation|detection|interactive)$")
-    model: str
+    kind: str = Field("interactive", pattern="^(segmentation|detection|interactive)$")
+    model: str = "interactive.joblib"
+    # "test" runs on separately uploaded test images; "images" on project images.
+    source: str = Field("test", pattern="^(images|test)$")
     image_ids: Optional[List[str]] = None
     conf: float = 0.25
     tta: bool = True
+    export: bool = True            # bundle predicted masks into a downloadable zip
 
 
 class TaskOut(BaseModel):

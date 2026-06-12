@@ -75,7 +75,7 @@ class ProjectStore:
             **kwargs,
         )
         base = self.path(pid)
-        for sub in ("images", "annotations", "masks", "models", "exports"):
+        for sub in ("images", "test", "annotations", "masks", "results", "models", "exports"):
             (base / sub).mkdir(parents=True, exist_ok=True)
         self._write_meta(project)
         return project
@@ -123,23 +123,197 @@ class ProjectStore:
             return json.loads(manifest.read_text())
         return []
 
-    def add_image(self, project_id: str, filename: str, content: bytes) -> Dict[str, Any]:
+    def _append_manifest(self, project_id: str, entry: Dict[str, Any]) -> Dict[str, Any]:
+        manifest_path = self.images_dir(project_id) / "_manifest.json"
+        manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else []
+        entry.setdefault("order", len(manifest))
+        manifest.append(entry)
+        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+        return entry
+
+    def add_image(self, project_id: str, filename: str, content: bytes,
+                  selected: bool = True, group: Optional[str] = None,
+                  axis: Optional[int] = None, index: Optional[int] = None) -> Dict[str, Any]:
         img_id = new_id("img_")
         ext = Path(filename).suffix.lower() or ".png"
         dest = self.images_dir(project_id) / f"{img_id}{ext}"
         dest.write_bytes(content)
+        return self._append_manifest(project_id, {
+            "id": img_id, "filename": filename, "path": dest.name,
+            "selected": selected, "group": group, "axis": axis, "index": index,
+        })
+
+    @staticmethod
+    def stack_info(content: bytes) -> Dict[str, Any]:
+        """Read just the (effective) shape of a TIFF without loading all data.
+
+        Applies the same normalisation as ``add_stack`` so the per-axis slice
+        counts reported here match what slicing will actually produce.
+        """
+        import io as _io
+
+        import tifffile
+
+        with tifffile.TiffFile(_io.BytesIO(content)) as tf:
+            shape = tuple(int(x) for x in tf.series[0].shape)
+        if len(shape) == 2:
+            eff = (1, shape[0], shape[1])
+        elif len(shape) == 4 and shape[-1] in (3, 4):
+            eff = shape[:3]
+        elif len(shape) == 3:
+            eff = shape
+        else:
+            raise ValueError(f"Unsupported TIFF shape {shape!r}")
+        return {"raw_shape": list(shape), "shape": list(eff), "ndim": 3}
+
+    def add_stack(self, project_id: str, filename: str, content: bytes,
+                  axis: int = 0, select_every: int = 1, max_select: int = 0) -> List[Dict[str, Any]]:
+        """Slice a multi-page / 3D TIFF along ``axis`` and add each slice.
+
+        ``select_every`` marks every Nth slice as selected for annotation; the
+        rest are stored but not selected. Slices are min-max normalised to 8-bit
+        for consistent display.
+        """
+        import io as _io
+
+        import numpy as np
+        import tifffile
+        from PIL import Image
+
+        arr = tifffile.imread(_io.BytesIO(content))
+        arr = np.asarray(arr)
+        # Reduce trailing channel dims to a plain volume where possible.
+        if arr.ndim == 2:
+            arr = arr[None, ...]
+        elif arr.ndim == 4 and arr.shape[-1] in (3, 4):
+            arr = arr[..., :3].mean(axis=-1)         # collapse colour to intensity
+        if arr.ndim != 3:
+            raise ValueError(f"Unsupported TIFF shape {arr.shape!r}")
+
+        axis = int(axis) % 3
+        vol = np.moveaxis(arr, axis, 0)              # chosen axis -> slice index
+        vmin, vmax = float(vol.min()), float(vol.max())
+        scale = (255.0 / (vmax - vmin)) if vmax > vmin else 1.0
+
+        group = new_id("stk_")
+        n = vol.shape[0]
+        sel_idx = set(range(0, n, max(1, select_every)))
+        if max_select and len(sel_idx) > max_select:
+            sel_idx = set(sorted(sel_idx)[:max_select])
+
+        stem = Path(filename).stem
+        added = []
+        for i in range(n):
+            sl = ((vol[i].astype(np.float32) - vmin) * scale).clip(0, 255).astype(np.uint8)
+            buf = _io.BytesIO()
+            Image.fromarray(sl).convert("RGB").save(buf, "PNG")
+            added.append(self.add_image(
+                project_id, f"{stem}_a{axis}_{i:04d}.png", buf.getvalue(),
+                selected=(i in sel_idx), group=group, axis=axis, index=i))
+        return added
+
+    def set_selected(self, project_id: str, image_id: str, selected: bool) -> bool:
         manifest_path = self.images_dir(project_id) / "_manifest.json"
-        manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else []
-        entry = {"id": img_id, "filename": filename, "path": dest.name, "order": len(manifest)}
-        manifest.append(entry)
-        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
-        return entry
+        if not manifest_path.exists():
+            return False
+        manifest = json.loads(manifest_path.read_text())
+        hit = False
+        for e in manifest:
+            if e["id"] == image_id:
+                e["selected"] = selected
+                hit = True
+        if hit:
+            manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+        return hit
+
+    def set_selected_many(self, project_id: str, ids: List[str], selected: bool) -> int:
+        """Set the ``selected`` flag for many images at once (select-all / clear /
+        every-Nth from the gallery)."""
+        manifest_path = self.images_dir(project_id) / "_manifest.json"
+        if not manifest_path.exists():
+            return 0
+        manifest = json.loads(manifest_path.read_text())
+        idset = set(ids)
+        n = 0
+        for e in manifest:
+            if e["id"] in idset:
+                e["selected"] = selected
+                n += 1
+        if n:
+            manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+        return n
+
+    def save_mask(self, project_id: str, image_id: str, png_bytes: bytes) -> Path:
+        """Persist an (edited) label mask PNG for an image."""
+        path = self.mask_path(project_id, image_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(png_bytes)
+        return path
+
+    def update_classes(self, project_id: str, classes: List[Dict]) -> Optional["Project"]:
+        project = self.get(project_id)
+        if project is None:
+            return None
+        project.classes = [ProjectClass(**c) for c in classes]
+        self._write_meta(project)
+        # Classes changed -> the saved interactive model is stale; drop it so the
+        # next segmentation retrains and produces a fresh overlay.
+        model = self.path(project_id) / "models" / "interactive.joblib"
+        if model.exists():
+            model.unlink()
+        return project
+
 
     def image_path(self, project_id: str, image_id: str) -> Optional[Path]:
         for entry in self.list_images(project_id):
             if entry["id"] == image_id:
                 return self.images_dir(project_id) / entry["path"]
         return None
+
+    # ------------------------------------------------------- test images set
+    # A separate set of images used only for inference, so predictions never
+    # overwrite the training masks. Mirrors the original "deploy" file picker.
+    def test_dir(self, project_id: str) -> Path:
+        return self.path(project_id) / "test"
+
+    def list_test_images(self, project_id: str) -> List[Dict[str, Any]]:
+        manifest = self.test_dir(project_id) / "_manifest.json"
+        if manifest.exists():
+            return json.loads(manifest.read_text())
+        return []
+
+    def add_test_image(self, project_id: str, filename: str, content: bytes) -> Dict[str, Any]:
+        self.test_dir(project_id).mkdir(parents=True, exist_ok=True)
+        img_id = new_id("test_")
+        ext = Path(filename).suffix.lower() or ".png"
+        dest = self.test_dir(project_id) / f"{img_id}{ext}"
+        dest.write_bytes(content)
+        manifest_path = self.test_dir(project_id) / "_manifest.json"
+        manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else []
+        entry = {"id": img_id, "filename": filename, "path": dest.name, "order": len(manifest)}
+        manifest.append(entry)
+        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+        return entry
+
+    def test_image_path(self, project_id: str, image_id: str) -> Optional[Path]:
+        for entry in self.list_test_images(project_id):
+            if entry["id"] == image_id:
+                return self.test_dir(project_id) / entry["path"]
+        return None
+
+    # ------------------------------------------------------------- results
+    def results_dir(self, project_id: str) -> Path:
+        d = self.path(project_id) / "results"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def result_mask_path(self, project_id: str, image_id: str) -> Path:
+        return self.results_dir(project_id) / f"{image_id}.png"
+
+    def export_path(self, project_id: str, name: str) -> Path:
+        d = self.path(project_id) / "exports"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / name
 
     # ------------------------------------------------------------ annotations
     def annotation_path(self, project_id: str, image_id: str) -> Path:

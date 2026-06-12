@@ -19,6 +19,14 @@ const latestMesh = computed(() =>
   tasks.list.find((t) => t.type === 'mesh' && t.state === 'done')?.result)
 const meshTask = computed(() =>
   tasks.list.find((t) => t.type === 'mesh'))
+const meshError = computed(() => {
+  const t = tasks.list.find((tt) => tt.type === 'mesh')
+  return t && t.state === 'error' ? (t.error || 'Mesh build failed') : null
+})
+const meshRunning = computed(() => {
+  const t = tasks.list.find((tt) => tt.type === 'mesh')
+  return t && (t.state === 'running' || t.state === 'queued')
+})
 
 onMounted(async () => {
   if (store.current?.id !== props.id) await store.open(props.id)
@@ -85,7 +93,8 @@ async function build() {
       <div v-else class="placeholder viewport">
         <div class="ph-inner">
           <div class="ph-icon">⬡</div>
-          <p class="muted">{{ meshTask ? 'Building isosurface…' : 'Build a mesh to view it in 3D.' }}</p>
+          <p v-if="meshError" class="err mono ph-err">{{ meshError.split('\n')[0] }}</p>
+          <p v-else class="muted">{{ meshRunning ? 'Building isosurface…' : 'Build a mesh to view it in 3D.' }}</p>
         </div>
       </div>
     </div>

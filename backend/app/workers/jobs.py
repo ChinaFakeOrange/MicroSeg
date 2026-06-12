@@ -22,6 +22,41 @@ def _load_rgb(path) -> np.ndarray:
     return np.asarray(Image.open(path).convert("RGB"))
 
 
+def _ordered_masked_images(project_id: str):
+    """Project images that have a predicted mask, ordered as a z-stack.
+
+    Slices from a TIFF stack carry (group, index); order by those when present,
+    otherwise fall back to manifest order.
+    """
+    entries = [e for e in store.list_images(project_id)
+               if store.mask_path(project_id, e["id"]).exists()]
+    entries.sort(key=lambda e: (e.get("group") or "", e.get("index") if e.get("index") is not None else 0))
+    return entries
+
+
+def _stack_masks(project_id: str):
+    """Assemble all per-slice masks into a single (Z, H, W) label volume.
+
+    Returns (volume, entries). Slices are resized to the first slice's shape if
+    they differ so the stack is rectangular.
+    """
+    entries = _ordered_masked_images(project_id)
+    if not entries:
+        raise ValueError("No segmented masks yet. Run segmentation (and 'Apply to rest') first.")
+    slices = []
+    ref_shape = None
+    for e in entries:
+        m = np.asarray(Image.open(store.mask_path(project_id, e["id"])))
+        if m.ndim == 3:
+            m = m[..., 0]
+        if ref_shape is None:
+            ref_shape = m.shape
+        elif m.shape != ref_shape:
+            m = np.asarray(Image.fromarray(m).resize((ref_shape[1], ref_shape[0]), Image.NEAREST))
+        slices.append(m.astype(np.int32))
+    return np.stack(slices, axis=0), entries
+
+
 def _guard(task_id: str) -> None:
     if tracker.is_cancelled(task_id):
         raise InterruptedError("cancelled")
@@ -31,52 +66,87 @@ def _guard(task_id: str) -> None:
 # Interactive segmentation (LightGBM scribbles -> full-frame labels)
 # --------------------------------------------------------------------------- #
 @celery_app.task(bind=True)
-def interactive_segment(self, task_id: str, project_id: str, image_ids: List[str], strokes_by_image: Dict[str, list]):
+def interactive_segment(self, task_id: str, project_id: str, image_ids=None,
+                        strokes_by_image=None, scope: str = "all", export: bool = False):
     from app.ml.interactive import InteractiveSegmenter, Stroke
 
     try:
-        tracker.update(task_id, state=TaskState.RUNNING, message="Extracting features", progress=0.05)
+        tracker.update(task_id, state=TaskState.RUNNING, message="Gathering annotations", progress=0.05)
+        strokes_by_image = strokes_by_image or {}
 
-        # Train on every image that has scribbles, then predict all requested.
-        all_strokes: List[Stroke] = []
-        ref_image = None
-        train_strokes_per_img = []
-        for img_id, strokes in strokes_by_image.items():
+        manifest = store.list_images(project_id)
+        all_images = [e["id"] for e in manifest]
+        selected = {e["id"] for e in manifest if e.get("selected", True)}
+
+        if image_ids:
+            targets = image_ids
+        elif scope == "rest":
+            targets = [i for i in all_images if i not in selected]   # unselected only
+        elif scope == "selected":
+            targets = [i for i in all_images if i in selected]
+        else:
+            targets = all_images
+        if not targets:
+            targets = all_images
+
+        # Build training data from every image's scribbles: anything passed in
+        # this request wins, otherwise fall back to the saved annotation on disk.
+        pairs = []
+        for img_id in all_images:
+            scribbles = strokes_by_image.get(img_id)
+            if not scribbles:
+                ann = store.load_annotation(project_id, img_id) or {}
+                scribbles = ann.get("scribbles", [])
+            if not scribbles:
+                continue
             path = store.image_path(project_id, img_id)
-            if path is None or not strokes:
+            if path is None:
                 continue
             img = _load_rgb(path)
-            ref_image = ref_image if ref_image is not None else img
-            train_strokes_per_img.append((img, [Stroke(s["label"], s["points"]) for s in strokes]))
+            pairs.append((img, [Stroke(s["label"], s["points"]) for s in scribbles]))
 
-        if not train_strokes_per_img:
-            raise ValueError("No scribbles provided")
+        if not pairs:
+            raise ValueError("No scribbles found on any image. Add foreground/background scribbles first.")
 
-        # Fit on the first scribbled image (multi-image fit could concatenate features).
+        tracker.update(task_id, message=f"Training on {len(pairs)} annotated image(s)", progress=0.2)
         seg = InteractiveSegmenter()
-        base_img, base_strokes = train_strokes_per_img[0]
-        seg.fit(base_img, base_strokes)
+        seg.fit_multi(pairs)
         _guard(task_id)
-        tracker.update(task_id, message="Predicting", progress=0.4)
 
+        tracker.update(task_id, message=f"Predicting {len(targets)} image(s)", progress=0.4)
         results = {}
-        for i, img_id in enumerate(image_ids):
+        label_pngs = []
+        for i, img_id in enumerate(targets):
             _guard(task_id)
             path = store.image_path(project_id, img_id)
             if path is None:
                 continue
-            labels = seg.predict(_load_rgb(path))
+            labels = seg.predict(_load_rgb(path))   # native resolution -> original size
             Image.fromarray(labels).save(store.mask_path(project_id, img_id))
             results[img_id] = {"mask": store.mask_path(project_id, img_id).name}
-            tracker.update(task_id, progress=0.4 + 0.6 * (i + 1) / len(image_ids))
+            if export:
+                import io as _io
+                buf = _io.BytesIO(); Image.fromarray(labels).save(buf, "PNG")
+                fname = next((e.get("filename", img_id) for e in manifest if e["id"] == img_id), img_id)
+                from pathlib import Path as _P
+                label_pngs.append((f"labels/{_P(fname).stem}.png", buf.getvalue()))
+            tracker.update(task_id, progress=0.4 + 0.6 * (i + 1) / max(1, len(targets)))
 
-        # Persist the model for reuse.
         model_path = store.path(project_id) / "models" / "interactive.joblib"
         model_path.write_bytes(seg.dumps())
 
+        result = {"images": results, "model": model_path.name,
+                  "n_images": len(results), "trained_on": len(pairs), "scope": scope}
+        if export and label_pngs:
+            import zipfile
+            export_name = f"segment_{task_id[:8]}.zip"
+            with zipfile.ZipFile(store.export_path(project_id, export_name), "w", zipfile.ZIP_DEFLATED) as zf:
+                for name, data in label_pngs:
+                    zf.writestr(name, data)
+            result["export"] = export_name
+
         tracker.update(task_id, state=TaskState.SUCCESS, progress=1.0,
-                       message=f"Segmented {len(results)} image(s)",
-                       result={"images": results, "model": model_path.name})
+                       message=f"Segmented {len(results)} image(s)", result=result)
     except InterruptedError:
         tracker.update(task_id, state=TaskState.CANCELLED, message="Cancelled by user")
     except Exception as exc:  # noqa: BLE001
@@ -91,8 +161,36 @@ def run_morphometry(self, task_id: str, project_id: str, image_ids: List[str], c
     from app.ml.morphometry import MorphometryConfig, analyze
 
     try:
+        source = (config or {}).pop("source", "image")
         tracker.update(task_id, state=TaskState.RUNNING, progress=0.0, message="Measuring particles")
         cfg = MorphometryConfig(**config)
+
+        # --- 3D volume: measure objects across the whole stacked mask ---
+        if source == "volume":
+            tracker.update(task_id, message="Stacking masks into a volume", progress=0.2)
+            vol, entries = _stack_masks(project_id)
+            _guard(task_id)
+            tracker.update(task_id, message=f"Measuring {vol.shape[0]} slices in 3D", progress=0.5)
+            res = analyze(vol, cfg)
+            rows_all = res.rows
+            for i, r in enumerate(rows_all):
+                r["object"] = i
+            import csv
+            export = store.export_path(project_id, f"morphometry3d_{task_id[:8]}.csv")
+            if rows_all:
+                with export.open("w", newline="") as f:
+                    w = csv.DictWriter(f, fieldnames=list(rows_all[0].keys())); w.writeheader(); w.writerows(rows_all)
+            tracker.update(task_id, state=TaskState.SUCCESS, progress=1.0,
+                           message=f"Measured {len(rows_all)} 3D objects",
+                           result={"rows": rows_all, "ndim": 3, "source": "volume",
+                                   "volume_shape": list(vol.shape),
+                                   "summary": {"count": len(rows_all),
+                                               "total_area": float(sum(r.get("area", 0) for r in rows_all))},
+                                   "n_objects": len(rows_all),
+                                   "export": export.name if rows_all else None})
+            return
+
+        # --- per-image 2D ---
         rows_all, per_image = [], {}
         for i, img_id in enumerate(image_ids):
             _guard(task_id)
@@ -105,11 +203,13 @@ def run_morphometry(self, task_id: str, project_id: str, image_ids: List[str], c
                 r["image_id"] = img_id
             rows_all.extend(res.rows)
             per_image[img_id] = res.summary
-            tracker.update(task_id, progress=(i + 1) / len(image_ids))
+            tracker.update(task_id, progress=(i + 1) / max(1, len(image_ids)))
 
-        # Write a CSV export.
+        if not rows_all and not per_image:
+            raise ValueError("No segmented masks found for the selected image(s). Run segmentation first.")
+
         import csv
-        export = store.path(project_id) / "exports" / f"morphometry_{task_id[:8]}.csv"
+        export = store.export_path(project_id, f"morphometry_{task_id[:8]}.csv")
         if rows_all:
             with export.open("w", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=list(rows_all[0].keys()))
@@ -118,7 +218,12 @@ def run_morphometry(self, task_id: str, project_id: str, image_ids: List[str], c
 
         tracker.update(task_id, state=TaskState.SUCCESS, progress=1.0,
                        message=f"Measured {len(rows_all)} objects",
-                       result={"n_objects": len(rows_all), "per_image": per_image,
+                       result={"rows": rows_all, "ndim": 2, "source": "image",
+                               "summary": {
+                                   "count": len(rows_all),
+                                   "total_area": float(sum(r.get("area", 0) for r in rows_all)),
+                               },
+                               "n_objects": len(rows_all), "per_image": per_image,
                                "export": export.name if rows_all else None})
     except InterruptedError:
         tracker.update(task_id, state=TaskState.CANCELLED)
@@ -134,10 +239,22 @@ def run_percolation(self, task_id: str, project_id: str, image_id: str, params: 
     from app.ml.percolation import invasion_percolation, spanning_clusters
 
     try:
+        source = params.get("source", "image")
         tracker.update(task_id, state=TaskState.RUNNING, progress=0.1, message="Building pore mask")
-        mask_path = store.mask_path(project_id, image_id)
-        labels = np.asarray(Image.open(mask_path))
         pore_label = params.get("pore_label")
+
+        if source == "volume":
+            vol, entries = _stack_masks(project_id)        # (Z, H, W) label volume
+            labels = vol
+            tracker.update(task_id, progress=0.2, message=f"3D pore network · {vol.shape[0]} slices")
+        else:
+            mask_path = store.mask_path(project_id, image_id)
+            if not mask_path.exists():
+                raise ValueError("This image has no segmented mask yet. Run segmentation first.")
+            labels = np.asarray(Image.open(mask_path))
+            if labels.ndim == 3:
+                labels = labels[..., 0]
+
         mask = (labels == pore_label) if pore_label is not None else (labels > 0)
 
         report = spanning_clusters(mask, axis=params.get("inlet_axis", 0))
@@ -149,8 +266,6 @@ def run_percolation(self, task_id: str, project_id: str, image_id: str, params: 
             n_frames=params.get("n_frames", 120),
         )
 
-        # Downsample the time map for transport to the browser (RLE per frame is
-        # done client-side; here we ship the raw int16 map base64-encoded).
         import base64
         tm = inv.time_map.astype(np.int16)
         payload = base64.b64encode(tm.tobytes()).decode()
@@ -158,6 +273,8 @@ def run_percolation(self, task_id: str, project_id: str, image_id: str, params: 
         tracker.update(task_id, state=TaskState.SUCCESS, progress=1.0, message="Percolation complete",
                        result={
                            "shape": list(tm.shape),
+                           "ndim": int(mask.ndim),
+                           "source": source,
                            "n_steps": inv.n_steps,
                            "breakthrough_step": inv.breakthrough_step,
                            "saturation_curve": inv.saturation_curve,

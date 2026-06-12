@@ -16,6 +16,15 @@ export const useProjectStore = defineStore('projects', {
   },
 
   actions: {
+    // The backend manifest stores `filename`; views display `.name`. Normalise
+    // here so every image has a friendly, non-empty name in one place.
+    _normalize(images) {
+      return (images || []).map((img) => ({
+        ...img,
+        name: img.name || img.filename || img.path || img.id,
+      }))
+    },
+
     async refresh() {
       this.loading = true
       this.error = null
@@ -33,7 +42,7 @@ export const useProjectStore = defineStore('projects', {
       this.error = null
       try {
         this.current = await api.getProject(id)
-        this.images = await api.listImages(id)
+        this.images = this._normalize(await api.listImages(id))
       } catch (e) {
         this.error = e.message
       } finally {
@@ -57,13 +66,32 @@ export const useProjectStore = defineStore('projects', {
     },
 
     async reloadImages() {
-      if (this.current) this.images = await api.listImages(this.current.id)
+      if (this.current) this.images = this._normalize(await api.listImages(this.current.id))
     },
 
-    async upload(fileList) {
+    async upload(fileList, opts = {}) {
       if (!this.current) return
-      await api.uploadImages(this.current.id, fileList)
+      await api.uploadImages(this.current.id, fileList, opts)
       await this.reloadImages()
+    },
+
+    async updateClasses(classes) {
+      if (!this.current) return
+      this.current = await api.updateClasses(this.current.id, classes)
+    },
+
+    async toggleSelected(imageId, selected) {
+      if (!this.current) return
+      await api.setImageSelected(this.current.id, imageId, selected)
+      const img = this.images.find((i) => i.id === imageId)
+      if (img) img.selected = selected
+    },
+
+    async setSelectedMany(ids, selected) {
+      if (!this.current || !ids.length) return
+      await api.selectImages(this.current.id, ids, selected)
+      const idset = new Set(ids)
+      for (const img of this.images) if (idset.has(img.id)) img.selected = selected
     },
   },
 })

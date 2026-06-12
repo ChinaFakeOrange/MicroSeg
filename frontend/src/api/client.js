@@ -34,13 +34,40 @@ export const api = {
 
   // --- images ---
   listImages: (pid) => http('GET', `/projects/${pid}/images`),
-  uploadImages: (pid, fileList) => {
+  uploadImages: (pid, files, opts = {}) => {
     const form = new FormData()
-    for (const f of fileList) form.append('files', f)
+    for (const f of files) form.append('files', f)
+    if (opts.axis != null) form.append('axis', opts.axis)
+    if (opts.select_every != null) form.append('select_every', opts.select_every)
+    if (opts.max_select != null) form.append('max_select', opts.max_select)
     return http('POST', `/projects/${pid}/images`, form, true)
   },
+  setImageSelected: (pid, iid, selected) =>
+    http('PATCH', `/projects/${pid}/images/${iid}`, { selected }),
+  selectImages: (pid, ids, selected) =>
+    http('POST', `/projects/${pid}/images/select`, { ids, selected }),
+  updateClasses: (pid, classes) => http('PUT', `/projects/${pid}/classes`, { classes }),
+  volumeInfo: (pid) => http('GET', `/projects/${pid}/volume-info`),
+  inspectTiff: (file) => {
+    const form = new FormData()
+    form.append('file', file)
+    return http('POST', `/tiff/inspect`, form, true)
+  },
+  saveMask: (pid, iid, pngBase64) =>
+    http('PUT', `/projects/${pid}/images/${iid}/mask`, { png_base64: pngBase64 }),
   rawImageUrl: (pid, iid) => `${BASE}/projects/${pid}/images/${iid}/raw`,
   maskUrl: (pid, iid) => `${BASE}/projects/${pid}/images/${iid}/mask?colorized=true`,
+  rawMaskUrl: (pid, iid) => `${BASE}/projects/${pid}/images/${iid}/mask?colorized=false`,
+
+  // --- test images (for inference) ---
+  listTestImages: (pid) => http('GET', `/projects/${pid}/test-images`),
+  uploadTestImages: (pid, files) => {
+    const form = new FormData()
+    for (const f of files) form.append('files', f)
+    return http('POST', `/projects/${pid}/test-images`, form, true)
+  },
+  testRawUrl: (pid, iid) => `${BASE}/projects/${pid}/test-images/${iid}/raw`,
+  testResultUrl: (pid, iid) => `${BASE}/projects/${pid}/test-images/${iid}/result?colorized=true`,
 
   // --- annotations ---
   getAnnotation: (pid, iid) => http('GET', `/projects/${pid}/images/${iid}/annotation`),

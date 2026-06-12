@@ -83,6 +83,7 @@ def train_yolo(task_id: str, project_id: str, params: Dict) -> Dict:
         project=str(out_dir),
         name=f"yolo_{task_id[:8]}",
         verbose=False,
+        workers=0,  # Celery worker is a daemon process; can't spawn dataloader children
         device=0 if get_settings().resolve_device() == "cuda" else "cpu",
     )
     best = Path(results.save_dir) / "weights" / "best.pt"

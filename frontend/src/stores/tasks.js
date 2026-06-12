@@ -8,6 +8,17 @@ import { api, taskSocketUrl } from '@/api/client'
 
 const TERMINAL = new Set(['done', 'error', 'cancelled'])
 
+// The backend speaks pending/running/success/failed/cancelled; the rest of the
+// UI speaks queued/running/done/error/cancelled. Normalise on the way in so a
+// finished task actually reads as "done" (otherwise results never render and
+// tasks appear active forever).
+const STATE_MAP = {
+  pending: 'queued', queued: 'queued', running: 'running',
+  success: 'done', done: 'done', failed: 'error', error: 'error',
+  cancelled: 'cancelled', canceled: 'cancelled',
+}
+const normState = (s) => STATE_MAP[s] || s
+
 export const useTaskStore = defineStore('tasks', {
   state: () => ({
     tasks: {},          // id -> task record
@@ -26,6 +37,7 @@ export const useTaskStore = defineStore('tasks', {
   actions: {
     ingest(task) {
       if (!task || !task.id) return
+      if (task.state) task = { ...task, state: normState(task.state) }
       // Merge so a partial WS event never clobbers a fuller record.
       this.tasks[task.id] = { ...this.tasks[task.id], ...task }
     },

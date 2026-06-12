@@ -1,11 +1,35 @@
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useProjectStore } from '@/stores/projects'
+import { api } from '@/api/client'
 
 const router = useRouter()
 const store = useProjectStore()
 const creating = ref(false)
+const createFiles = ref([])
+const uploadOpts = reactive({ axis: 0, select_every: 1 })
+const submitting = ref(false)
+const tiffInfo = ref(null)        // { shape: [d0,d1,d2] } of the first selected TIFF
+
+const hasTiff = () => createFiles.value.some((f) => /\.tiff?$/i.test(f.name))
+async function onCreateFiles(e) {
+  createFiles.value = Array.from(e.target.files || [])
+  tiffInfo.value = null
+  const tiff = createFiles.value.find((f) => /\.tiff?$/i.test(f.name))
+  if (tiff) {
+    try { tiffInfo.value = await api.inspectTiff(tiff) } catch { tiffInfo.value = null }
+  }
+}
+
+// Number of slices along the chosen axis, and how many will be annotated.
+const axisCount = computed(() => tiffInfo.value?.shape?.[uploadOpts.axis] ?? null)
+const selectedCount = computed(() => {
+  const n = axisCount.value
+  if (!n) return null
+  return Math.ceil(n / Math.max(1, uploadOpts.select_every))
+})
+const AXIS_NAMES = ['Z / pages', 'Y', 'X']
 
 const draft = reactive({
   name: '',
@@ -28,10 +52,19 @@ function removeClass(i) { draft.classes.splice(i, 1) }
 
 async function submit() {
   if (!draft.name.trim()) return
-  const project = await store.create({ ...draft })
-  creating.value = false
-  draft.name = ''
-  router.push({ name: 'annotate', params: { id: project.id } })
+  submitting.value = true
+  try {
+    const project = await store.create({ ...draft })
+    // Upload any chosen images right away (TIFF stacks are sliced server-side).
+    if (createFiles.value.length) {
+      await store.open(project.id)
+      await store.upload(createFiles.value, { ...uploadOpts })
+    }
+    creating.value = false
+    draft.name = ''
+    createFiles.value = []; tiffInfo.value = null
+    router.push({ name: 'annotate', params: { id: project.id } })
+  } finally { submitting.value = false }
 }
 
 function open(p) { router.push({ name: 'annotate', params: { id: p.id } }) }
@@ -150,6 +183,46 @@ onMounted(() => store.refresh())
               <input class="field" v-model="draft.description" placeholder="optional" />
             </div>
 
+            <div class="uploads">
+              <div class="row" style="margin-bottom:8px">
+                <label class="lbl" style="margin:0">Images (optional)</label>
+                <span class="spacer"></span>
+                <label class="btn btn-sm filebtn">
+                  ＋ Choose files
+                  <input type="file" accept="image/*,.tif,.tiff" multiple hidden @change="onCreateFiles" />
+                </label>
+              </div>
+              <p v-if="createFiles.length" class="faint mono small">{{ createFiles.length }} file(s) selected</p>
+              <p v-else class="faint mono small">PNG/JPG, or a multi-page / 3D TIFF (sliced into a stack).</p>
+
+              <div v-if="hasTiff()" class="tiffopts">
+                <div style="grid-column: 1 / -1">
+                  <p v-if="tiffInfo" class="dim mono">
+                    TIFF dimensions: {{ tiffInfo.shape.join(' × ') }}
+                    <span class="faint">(axis 0 × 1 × 2)</span>
+                  </p>
+                  <p v-else class="faint mono small">Reading dimensions…</p>
+                </div>
+                <div>
+                  <label class="lbl">Slice axis</label>
+                  <select class="field" v-model.number="uploadOpts.axis">
+                    <option v-for="a in [0,1,2]" :key="a" :value="a">
+                      axis {{ a }} ({{ AXIS_NAMES[a] }}){{ tiffInfo ? ` · ${tiffInfo.shape[a]} slices` : '' }}
+                    </option>
+                  </select>
+                </div>
+                <div>
+                  <label class="lbl">Annotate every Nth</label>
+                  <input class="field mono" type="number" min="1" v-model.number="uploadOpts.select_every" />
+                </div>
+                <p v-if="axisCount" class="sel-summary mono" style="grid-column: 1 / -1">
+                  <span class="dot done"></span>
+                  {{ axisCount }} slices along axis {{ uploadOpts.axis }} →
+                  <strong>annotate {{ selectedCount }}</strong>, store the other {{ axisCount - selectedCount }}.
+                </p>
+              </div>
+            </div>
+
             <div class="classes">
               <div class="row" style="margin-bottom:8px">
                 <label class="lbl" style="margin:0">Classes</label>
@@ -167,7 +240,9 @@ onMounted(() => store.refresh())
 
           <footer class="modal-foot">
             <button class="btn btn-ghost" @click="creating = false">Cancel</button>
-            <button class="btn btn-primary" :disabled="!draft.name.trim()" @click="submit">Create project</button>
+            <button class="btn btn-primary" :disabled="!draft.name.trim() || submitting" @click="submit">
+              {{ submitting ? 'Creating…' : 'Create project' }}
+            </button>
           </footer>
         </div>
       </div>
@@ -225,7 +300,13 @@ onMounted(() => store.refresh())
 .form-row { display: flex; gap: 12px; align-items: flex-end; }
 .stack-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-soft); padding-bottom: 9px; white-space: nowrap; }
 .classes { border-top: 1px solid var(--line-soft); padding-top: 14px; }
-.class-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.uploads { border-top: 1px solid var(--line-soft); padding-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+.small { font-size: 12px; }
+.filebtn { cursor: pointer; }
+.tiffopts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+.dim { font-size: 13px; color: var(--ink); }
+.sel-summary { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-soft); padding: 8px 10px; background: var(--surface-2); border-radius: 8px; }
+.sel-summary strong { color: var(--cyan); }.class-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .color { width: 38px; height: 38px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: none; cursor: pointer; }
 .cid { width: 64px; flex: none; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 20px; border-top: 1px solid var(--line); }

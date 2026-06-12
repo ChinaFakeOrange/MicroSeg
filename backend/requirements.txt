@@ -21,5 +21,6 @@ scikit-learn==1.6.1
 lightgbm==4.6.0
 SimpleITK==2.4.1
 Pillow==11.1.0
+tifffile==2025.5.10
 joblib==1.4.2
 PyYAML==6.0.2

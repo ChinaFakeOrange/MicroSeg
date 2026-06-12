@@ -5,8 +5,11 @@ const props = defineProps({
   imageUrl: { type: String, required: true },
   maskUrl: { type: String, default: null },
   showMask: { type: Boolean, default: false },
+  maskOpacity: { type: Number, default: 0.5 },
+  maskEditing: { type: Boolean, default: false },
+  maskSrc: { type: String, default: null },     // raw label PNG url, to seed editing
   classes: { type: Array, default: () => [] },
-  tool: { type: String, default: 'scribble' }, // 'scribble' | 'box' | 'pan' | 'erase'
+  tool: { type: String, default: 'scribble' }, // 'scribble' | 'box' | 'pan' | 'erase' | 'maskedit'
   activeLabel: { type: Number, default: 1 },
   brush: { type: Number, default: 6 },
 })
@@ -14,10 +17,14 @@ const annotation = defineModel({ default: () => ({ boxes: [], scribbles: [] }) }
 
 const wrap = ref(null)
 const overlay = ref(null)
+const maskEl = ref(null)          // editable label layer (colorized)
 const imgEl = ref(null)
 const natural = reactive({ w: 0, h: 0 })
 const view = reactive({ scale: 1, x: 0, y: 0 })
 const loaded = ref(false)
+
+let maskLabels = null             // Uint8Array(w*h) of class ids
+let maskReady = false
 
 let drawing = false
 let panning = false
@@ -44,9 +51,108 @@ function onImgLoad() {
   natural.h = imgEl.value.naturalHeight
   overlay.value.width = natural.w
   overlay.value.height = natural.h
+  if (maskEl.value) { maskEl.value.width = natural.w; maskEl.value.height = natural.h }
   loaded.value = true
   fit()
   redraw()
+  if (props.maskEditing) beginMaskEdit()
+}
+
+// ---- editable label mask ----
+function hexToRgb(hex) {
+  const h = (hex || '#2fe6cf').replace('#', '')
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+}
+function rgbFor(label) { return hexToRgb(colorFor(label)) }
+
+// Load the current raw label mask (if any) into the editable buffer, or start
+// from an empty (all-zero) mask. Then paint a colorized preview.
+async function beginMaskEdit() {
+  const w = natural.w, h = natural.h
+  maskLabels = new Uint8Array(w * h)
+  if (props.maskSrc) {
+    try {
+      const img = await loadImage(props.maskSrc)
+      const tmp = document.createElement('canvas')
+      tmp.width = w; tmp.height = h
+      const tctx = tmp.getContext('2d')
+      tctx.drawImage(img, 0, 0, w, h)
+      const data = tctx.getImageData(0, 0, w, h).data
+      for (let i = 0; i < w * h; i++) maskLabels[i] = data[i * 4] // R channel = label id
+    } catch { /* no mask yet -> blank */ }
+  }
+  maskReady = true
+  renderMaskCanvas()
+}
+
+function loadImage(src) {
+  return new Promise((res, rej) => {
+    const im = new Image()
+    im.crossOrigin = 'anonymous'
+    im.onload = () => res(im)
+    im.onerror = rej
+    im.src = src
+  })
+}
+
+// Full recolour of the mask canvas from the label buffer.
+function renderMaskCanvas() {
+  const cv = maskEl.value
+  if (!cv || !maskLabels) return
+  const ctx = cv.getContext('2d')
+  const w = natural.w, h = natural.h
+  const out = ctx.createImageData(w, h)
+  const lut = {}
+  for (let i = 0; i < maskLabels.length; i++) {
+    const lab = maskLabels[i]
+    const o = i * 4
+    if (lab === 0) { out.data[o + 3] = 0; continue }   // background transparent
+    let c = lut[lab]
+    if (!c) { c = lut[lab] = rgbFor(lab) }
+    out.data[o] = c[0]; out.data[o + 1] = c[1]; out.data[o + 2] = c[2]; out.data[o + 3] = 255
+  }
+  ctx.putImageData(out, 0, 0)
+}
+
+// Paint a filled brush circle of the active label into buffer + canvas.
+function paintMaskAt(p) {
+  if (!maskReady) return
+  const w = natural.w, h = natural.h
+  const r = Math.max(1, props.brush)
+  const cx = Math.round(p.x), cy = Math.round(p.y)
+  const lab = props.activeLabel
+  const [rr, gg, bb] = rgbFor(lab)
+  const ctx = maskEl.value.getContext('2d')
+  const id = ctx.getImageData(Math.max(0, cx - r), Math.max(0, cy - r), r * 2, r * 2)
+  const ox = Math.max(0, cx - r), oy = Math.max(0, cy - r)
+  for (let y = -r; y <= r; y++) {
+    for (let x = -r; x <= r; x++) {
+      if (x * x + y * y > r * r) continue
+      const px = cx + x, py = cy + y
+      if (px < 0 || py < 0 || px >= w || py >= h) continue
+      maskLabels[py * w + px] = lab
+      const lx = px - ox, ly = py - oy
+      const o = (ly * id.width + lx) * 4
+      id.data[o] = rr; id.data[o + 1] = gg; id.data[o + 2] = bb; id.data[o + 3] = 255
+    }
+  }
+  ctx.putImageData(id, ox, oy)
+}
+
+// Export the edited label buffer as a base64 grayscale PNG (pixel = class id).
+function getMaskPng() {
+  if (!maskLabels) return null
+  const w = natural.w, h = natural.h
+  const cv = document.createElement('canvas')
+  cv.width = w; cv.height = h
+  const ctx = cv.getContext('2d')
+  const id = ctx.createImageData(w, h)
+  for (let i = 0; i < maskLabels.length; i++) {
+    const o = i * 4, v = maskLabels[i]
+    id.data[o] = v; id.data[o + 1] = v; id.data[o + 2] = v; id.data[o + 3] = 255
+  }
+  ctx.putImageData(id, 0, 0)
+  return cv.toDataURL('image/png')
 }
 
 function fit() {
@@ -72,6 +178,9 @@ function down(ev) {
     drawing = true
   } else if (props.tool === 'erase') {
     eraseAt(p)
+  } else if (props.tool === 'maskedit') {
+    drawing = true
+    paintMaskAt(p)
   }
 }
 
@@ -91,6 +200,8 @@ function move(ev) {
   } else if (props.tool === 'scribble' && activeStroke) {
     activeStroke.points.push([round(p.x), round(p.y)])
     redraw()
+  } else if (props.tool === 'maskedit') {
+    paintMaskAt(p)
   }
 }
 
@@ -185,6 +296,8 @@ const transform = computed(
 
 watch(() => annotation.value, redraw, { deep: true })
 watch(() => props.brush, redraw)
+watch(() => props.maskEditing, (on) => { if (on && loaded.value) beginMaskEdit() })
+watch(() => props.maskSrc, () => { if (props.maskEditing && loaded.value) beginMaskEdit() })
 
 // space-to-pan
 function keydown(e) { if (e.code === 'Space') spaceHeld = true }
@@ -205,7 +318,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerup', up)
 })
 
-defineExpose({ fit, clear: () => { annotation.value.boxes = []; annotation.value.scribbles = []; redraw() } })
+defineExpose({
+  fit,
+  clear: () => { annotation.value.boxes = []; annotation.value.scribbles = []; redraw() },
+  beginMaskEdit,
+  getMaskPng,
+})
 </script>
 
 <template>
@@ -226,12 +344,19 @@ defineExpose({ fit, clear: () => { annotation.value.boxes = []; annotation.value
         alt="annotation target"
       />
       <img
-        v-if="showMask && maskUrl"
+        v-if="showMask && maskUrl && !maskEditing"
         :src="maskUrl"
         class="mask-img"
+        :style="{ opacity: maskOpacity }"
         draggable="false"
         alt="predicted mask"
       />
+      <canvas
+        ref="maskEl"
+        class="mask-edit"
+        v-show="maskEditing"
+        :style="{ opacity: maskOpacity }"
+      ></canvas>
       <canvas ref="overlay" class="overlay"></canvas>
     </div>
 
@@ -250,6 +375,7 @@ defineExpose({ fit, clear: () => { annotation.value.boxes = []; annotation.value
 .stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
 .base-img { display: block; image-rendering: pixelated; user-select: none; }
 .mask-img { position: absolute; top: 0; left: 0; opacity: 0.5; mix-blend-mode: screen; image-rendering: pixelated; pointer-events: none; }
+.mask-edit { position: absolute; top: 0; left: 0; image-rendering: pixelated; pointer-events: none; }
 .overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
 .hud {
   position: absolute; bottom: 10px; left: 10px;

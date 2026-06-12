@@ -72,8 +72,10 @@ def train_segmentation(task_id: str, project_id: str, params: Dict) -> Dict:
             y = torch.from_numpy(y)
             return x, y
 
-    train_loader = DataLoader(SegDataset(train_pairs, True), batch_size=batch_size, shuffle=True, num_workers=2)
-    val_loader = DataLoader(SegDataset(val_pairs, False), batch_size=batch_size, num_workers=2)
+    # num_workers must be 0: the Celery prefork worker is itself a daemon
+    # process, and daemonic processes are not allowed to spawn children.
+    train_loader = DataLoader(SegDataset(train_pairs, True), batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(SegDataset(val_pairs, False), batch_size=batch_size, num_workers=0)
 
     model = build_segmentation_model(num_classes, size=size).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)

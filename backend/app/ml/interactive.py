@@ -59,6 +59,30 @@ class InteractiveSegmenter:
 
     # ------------------------------------------------------------------ fit
     def fit(self, image: np.ndarray, strokes: Sequence[Stroke]) -> "InteractiveSegmenter":
+        return self.fit_multi([(image, strokes)])
+
+    def fit_multi(self, pairs: Sequence[tuple]) -> "InteractiveSegmenter":
+        """Fit on labelled pixels gathered from several (image, strokes) pairs.
+
+        This mirrors the original desktop ``MLSeg`` behaviour: every scribble on
+        every image contributes training pixels to a single classifier, which is
+        then used to label the whole dataset.
+        """
+        x_parts, y_parts = [], []
+        for image, strokes in pairs:
+            xs, ys = self._gather(image, strokes)
+            if xs is not None:
+                x_parts.append(xs)
+                y_parts.append(ys)
+        if not x_parts:
+            raise ValueError("No labelled pixels supplied")
+        x = np.concatenate(x_parts, axis=0)
+        y = np.concatenate(y_parts, axis=0)
+        self._fit_xy(x, y)
+        return self
+
+    def _gather(self, image: np.ndarray, strokes: Sequence[Stroke]):
+        """Sample the dense feature stack at every scribble pixel of one image."""
         features, _ = extract_features(image, self.config)
         x_parts, y_parts = [], []
         for stroke in strokes:
@@ -69,10 +93,10 @@ class InteractiveSegmenter:
             x_parts.append(sample_at_points(features, pts))
             y_parts.append(np.full(len(pts), stroke.label, dtype=np.int64))
         if not x_parts:
-            raise ValueError("No labelled pixels supplied")
+            return None, None
+        return np.concatenate(x_parts, axis=0), np.concatenate(y_parts, axis=0)
 
-        x = np.concatenate(x_parts, axis=0)
-        y = np.concatenate(y_parts, axis=0)
+    def _fit_xy(self, x: np.ndarray, y: np.ndarray) -> None:
         self.classes_ = sorted(np.unique(y).tolist())
 
         # First pass: fit on all features to estimate importances.
@@ -87,7 +111,7 @@ class InteractiveSegmenter:
         clf = lgb.LGBMClassifier(**self.params)
         clf.fit(x[:, self.selected_features], y)
         self.model = clf
-        return self
+
 
     # -------------------------------------------------------------- predict
     def predict(self, image: np.ndarray) -> np.ndarray:

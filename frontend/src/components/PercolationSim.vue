@@ -13,15 +13,21 @@ const canvas = ref(null)
 const playing = ref(false)
 const t = ref(0)          // current threshold (invasion step)
 const speed = ref(1)
-const state = reactive({ h: 0, w: 0, tmax: 0 })
+const sliceZ = ref(0)     // which Z-slice to show (3D only)
+const state = reactive({ h: 0, w: 0, d: 1, tmax: 0 })
 let timeMap = null        // Int16Array
 let raf = null
 let imageData = null
 let ctx = null
 
 function decode() {
-  const [h, w] = props.result.shape
-  state.h = h; state.w = w
+  const shape = props.result.shape
+  if (shape.length === 3) {
+    state.d = shape[0]; state.h = shape[1]; state.w = shape[2]
+  } else {
+    state.d = 1; state.h = shape[0]; state.w = shape[1]
+  }
+  sliceZ.value = Math.floor(state.d / 2)
   const bin = atob(props.result.time_map_b64)
   const bytes = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
@@ -48,9 +54,11 @@ function render() {
   const data = imageData.data
   const cur = t.value
   const front = Math.max(1, state.tmax * 0.06)
-  for (let i = 0; i < timeMap.length; i++) {
-    const v = timeMap[i]
-    const o = i * 4
+  const npix = state.w * state.h
+  const base = state.d > 1 ? sliceZ.value * npix : 0   // offset into the chosen Z-slice
+  for (let p = 0; p < npix; p++) {
+    const v = timeMap[base + p]
+    const o = p * 4
     if (v < 0 || v > cur) {
       // un-invaded: faint dark-field
       data[o] = 10; data[o + 1] = 13; data[o + 2] = 18; data[o + 3] = 255
@@ -98,6 +106,7 @@ const sparkPath = computed(() => {
 const progressFrac = computed(() => state.tmax ? t.value / state.tmax : 0)
 
 watch(() => props.result, () => { pause(); decode(); setup() })
+watch(sliceZ, render)
 onMounted(() => { decode(); setup() })
 onBeforeUnmount(pause)
 </script>
@@ -109,6 +118,13 @@ onBeforeUnmount(pause)
       <div class="badge perc-tag mono" :class="result.percolates ? 'pos' : 'neg'">
         {{ result.percolates ? 'PERCOLATES' : 'NO SPANNING PATH' }}
       </div>
+      <div v-if="state.d > 1" class="badge slice-tag mono">3D · slice {{ sliceZ + 1 }}/{{ state.d }}</div>
+    </div>
+
+    <div v-if="state.d > 1" class="slice-row">
+      <span class="mono faint">Z-slice</span>
+      <input class="scrub" type="range" min="0" :max="state.d - 1" v-model.number="sliceZ" />
+      <span class="mono faint">{{ sliceZ + 1 }} / {{ state.d }}</span>
     </div>
 
     <div class="perc-controls">
@@ -169,6 +185,8 @@ onBeforeUnmount(pause)
 .perc-tag { position: absolute; top: 14px; left: 14px; }
 .perc-tag.pos { color: var(--cyan); border-color: var(--cyan-deep); }
 .perc-tag.neg { color: var(--ink-soft); }
+.slice-tag { position: absolute; top: 14px; right: 14px; color: var(--ink-soft); }
+.slice-row { display: flex; align-items: center; gap: 10px; padding: 0 16px 8px; }
 
 .perc-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .scrub { flex: 1; min-width: 160px; accent-color: var(--magenta); }
