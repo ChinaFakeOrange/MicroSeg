@@ -173,7 +173,7 @@ function down(ev) {
     activeBox = { label: props.activeLabel, x: p.x, y: p.y, w: 0, h: 0 }
     drawing = true
   } else if (props.tool === 'scribble') {
-    activeStroke = { label: props.activeLabel, points: [[round(p.x), round(p.y)]] }
+    activeStroke = { label: props.activeLabel, width: props.brush, points: [[round(p.x), round(p.y)]] }
     annotation.value.scribbles.push(activeStroke)
     drawing = true
   } else if (props.tool === 'erase') {
@@ -258,13 +258,14 @@ function redraw() {
   // scribbles
   for (const s of annotation.value.scribbles) {
     if (s.points.length < 1) continue
+    const w = s.width || props.brush      // each stroke keeps the width it was drawn at
     ctx.strokeStyle = colorFor(s.label)
     ctx.fillStyle = colorFor(s.label)
-    ctx.lineWidth = props.brush
+    ctx.lineWidth = w
     ctx.lineJoin = ctx.lineCap = 'round'
     if (s.points.length === 1) {
       const [x, y] = s.points[0]
-      ctx.beginPath(); ctx.arc(x, y, props.brush / 2, 0, Math.PI * 2); ctx.fill()
+      ctx.beginPath(); ctx.arc(x, y, w / 2, 0, Math.PI * 2); ctx.fill()
     } else {
       ctx.beginPath()
       ctx.moveTo(s.points[0][0], s.points[0][1])
@@ -295,7 +296,6 @@ const transform = computed(
 )
 
 watch(() => annotation.value, redraw, { deep: true })
-watch(() => props.brush, redraw)
 watch(() => props.maskEditing, (on) => { if (on && loaded.value) beginMaskEdit() })
 watch(() => props.maskSrc, () => { if (props.maskEditing && loaded.value) beginMaskEdit() })
 

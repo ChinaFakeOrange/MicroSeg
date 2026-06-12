@@ -92,7 +92,10 @@ async def upload_images(
 
 @router.get("/projects/{project_id}/images")
 def list_images(project_id: str):
-    return store.list_images(project_id)
+    imgs = store.list_images(project_id)
+    for e in imgs:
+        e["has_mask"] = store.mask_path(project_id, e["id"]).exists()
+    return imgs
 
 
 @router.get("/projects/{project_id}/images/{image_id}/raw")
@@ -115,6 +118,36 @@ async def upload_test_images(project_id: str, files: list[UploadFile] = File(...
 @router.get("/projects/{project_id}/test-images")
 def list_test_images(project_id: str):
     return store.list_test_images(project_id)
+
+
+@router.post("/projects/{project_id}/train-pairs")
+async def upload_train_pairs(project_id: str,
+                             images: list[UploadFile] = File(...),
+                             masks: list[UploadFile] = File(...)):
+    """Upload external (image, label-mask) pairs for training. The i-th image is
+    paired with the i-th mask, so upload them in matching order."""
+    if not store.get(project_id):
+        raise HTTPException(404, "Project not found")
+    if len(images) != len(masks):
+        raise HTTPException(400, f"Got {len(images)} images but {len(masks)} masks — counts must match.")
+    added = []
+    for img, msk in zip(images, masks):
+        added.append(store.add_extra_pair(project_id, img.filename, await img.read(),
+                                          msk.filename, await msk.read()))
+    return {"added": added, "total": len(store.list_extra_pairs(project_id))}
+
+
+@router.get("/projects/{project_id}/train-pairs")
+def list_train_pairs(project_id: str):
+    return store.list_extra_pairs(project_id)
+
+
+@router.delete("/projects/{project_id}/train-pairs/{pair_id}")
+def delete_train_pair(project_id: str, pair_id: str):
+    ok = store.delete_extra_pair(project_id, pair_id)
+    if not ok:
+        raise HTTPException(404, "Pair not found")
+    return {"deleted": pair_id}
 
 
 @router.get("/projects/{project_id}/test-images/{image_id}/raw")
@@ -211,6 +244,12 @@ def select_images(project_id: str, body: SelectionUpdate):
     """Batch select / deselect images for annotation (select-all, clear, every-Nth)."""
     n = store.set_selected_many(project_id, body.ids, body.selected)
     return {"updated": n, "selected": body.selected}
+
+
+@router.get("/projects/{project_id}/models")
+def list_models(project_id: str):
+    """Trained models available in this project (interactive, segmentation, detection)."""
+    return store.list_models(project_id)
 
 
 @router.get("/projects/{project_id}/volume-info")

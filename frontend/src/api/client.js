@@ -48,6 +48,15 @@ export const api = {
     http('POST', `/projects/${pid}/images/select`, { ids, selected }),
   updateClasses: (pid, classes) => http('PUT', `/projects/${pid}/classes`, { classes }),
   volumeInfo: (pid) => http('GET', `/projects/${pid}/volume-info`),
+  listModels: (pid) => http('GET', `/projects/${pid}/models`),
+  listTrainPairs: (pid) => http('GET', `/projects/${pid}/train-pairs`),
+  uploadTrainPairs: (pid, images, masks) => {
+    const fd = new FormData()
+    for (const f of images) fd.append('images', f)
+    for (const f of masks) fd.append('masks', f)
+    return fetch(`${BASE}/projects/${pid}/train-pairs`, { method: 'POST', body: fd }).then((r) => r.json())
+  },
+  deleteTrainPair: (pid, pairId) => http('DELETE', `/projects/${pid}/train-pairs/${pairId}`),
   inspectTiff: (file) => {
     const form = new FormData()
     form.append('file', file)

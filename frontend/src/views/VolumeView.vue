@@ -1,8 +1,9 @@
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useProjectStore } from '@/stores/projects'
 import { useTaskStore } from '@/stores/tasks'
 import { useJobs } from '@/composables/useJobs'
+import { api } from '@/api/client'
 import VolumeViewer3D from '@/components/VolumeViewer3D.vue'
 
 const props = defineProps({ id: { type: String, required: true } })
@@ -12,9 +13,11 @@ const { dispatch } = useJobs()
 
 const err = ref(null)
 const wireframe = ref(false)
+const volInfo = ref(null)
 const cfg = reactive({ source: 'masks', label: null, threshold: 128, downsample: 2, step_size: 1 })
 
 const classes = computed(() => store.classes)
+const hasMasks = computed(() => (volInfo.value?.n_with_mask || 0) > 0)
 const latestMesh = computed(() =>
   tasks.list.find((t) => t.type === 'mesh' && t.state === 'done')?.result)
 const meshTask = computed(() =>
@@ -28,10 +31,16 @@ const meshRunning = computed(() => {
   return t && (t.state === 'running' || t.state === 'queued')
 })
 
+async function refreshVolume() {
+  try { volInfo.value = await api.volumeInfo(props.id) } catch { volInfo.value = null }
+}
+
 onMounted(async () => {
   if (store.current?.id !== props.id) await store.open(props.id)
   if (classes.value.length) cfg.label = classes.value[0].id
+  await refreshVolume()
 })
+watch(() => tasks.list.filter((t) => t.type === 'segment' && t.state === 'done').length, refreshVolume)
 
 async function build() {
   err.value = null
@@ -62,6 +71,10 @@ async function build() {
       </select>
 
       <template v-if="cfg.source === 'masks'">
+        <p class="vol-info mono">
+          <span class="dot done"></span>
+          {{ volInfo?.n_with_mask ?? 0 }} / {{ volInfo?.n_slices ?? 0 }} slices segmented
+        </p>
         <label class="lbl">Label</label>
         <select class="field" v-model.number="cfg.label">
           <option v-for="c in classes" :key="c.id" :value="c.id">{{ c.name }} ({{ c.id }})</option>
@@ -77,7 +90,8 @@ async function build() {
         <div><label class="lbl">Step size</label><input class="field mono" type="number" min="1" v-model.number="cfg.step_size" /></div>
       </div>
 
-      <button class="btn btn-primary full" @click="build">Build mesh</button>
+      <button class="btn btn-primary full" :disabled="cfg.source === 'masks' && !hasMasks" @click="build">Build mesh</button>
+      <p v-if="cfg.source === 'masks' && !hasMasks" class="hint faint mono">No masks yet — run segmentation (and "Apply to all") in Annotate to generate the 3D mask first.</p>
 
       <div v-if="latestMesh" class="meshstats">
         <div class="ms"><span class="eyebrow">Vertices</span><span class="mono">{{ latestMesh.vertex_count.toLocaleString() }}</span></div>
@@ -102,6 +116,8 @@ async function build() {
 </template>
 
 <style scoped>
+.vol-info { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-soft); padding: 8px 10px; background: var(--surface-2); border-radius: 8px; }
+.hint { font-size: 11px; line-height: 1.5; }
 .volume { display: grid; grid-template-columns: 300px 1fr; gap: 16px; height: calc(100vh - 56px - 48px); max-width: 1200px; margin: 0 auto; }
 .ctrl { padding: 18px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
 .small { font-size: 12px; line-height: 1.55; }

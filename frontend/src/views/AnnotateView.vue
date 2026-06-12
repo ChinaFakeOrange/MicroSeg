@@ -109,18 +109,20 @@ function pickInGallery(img, e) {
   store.toggleSelected(img.id, !(img.selected !== false))
 }
 
-// Dispatch interactive segmentation. Trains on the scribbles saved across ALL
-// images and labels every uploaded image (matching the original behaviour).
+// Run interactive segmentation on the CURRENT image only. Training still uses
+// every saved scribble in the project (more labels = better), but only the
+// current frame is predicted/overlaid — fast feedback while you annotate.
 async function runSegment() {
   dispatchError.value = null
   await saveCurrent()
-  // Need scribbles on at least one image somewhere in the project.
-  const hasLocal = annotation.scribbles.length > 0
+  const sel = images.value.filter((i) => i.selected !== false)
+  if (!sel.length) { dispatchError.value = 'Select at least one image (the gallery) to annotate first.'; return }
   try {
-    await dispatch('segment', props.id, { use_saved: true })  // image_ids omitted -> all
+    // Train on all scribbles across the selected images and label those
+    // selected images — the working set you're annotating.
+    await dispatch('segment', props.id, { scope: 'selected', use_saved: true })
     showMask.value = true
   } catch (e) { dispatchError.value = e.message }
-  if (!hasLocal && !store.images.length) dispatchError.value = 'Upload and scribble at least one image first.'
 }
 
 // When a segment task for this image finishes, bump the mask URL to reload it.
@@ -169,12 +171,14 @@ async function saveMask() {
   } catch (e) { dispatchError.value = e.message } finally { savingMask.value = false }
 }
 
-// --- apply segmentation to the rest of the images + export (req 5) ---
+// Train on all saved scribbles and label EVERY image, exporting a zip. This is
+// the step that produces the full paired (image, mask) dataset used for both
+// deep-learning training and 3D analysis.
 async function applyToRest() {
   dispatchError.value = null
   await saveCurrent()
   try {
-    await dispatch('segment', props.id, { scope: 'rest', export: true })
+    await dispatch('segment', props.id, { scope: 'all', export: true })
   } catch (e) { dispatchError.value = e.message }
 }
 
@@ -381,17 +385,17 @@ async function exportAnnotation() {
         <button class="btn" :disabled="saving || !currentImage" @click="saveCurrent">
           {{ saving ? 'Saving…' : 'Save annotation' }}
         </button>
-        <button class="btn btn-primary" :disabled="!currentImage" @click="runSegment">
-          Run segmentation
+        <button class="btn btn-primary" :disabled="!images.length" @click="runSegment">
+          Run segmentation (selected)
         </button>
         <button class="btn" :disabled="!currentImage" @click="applyToRest">
-          Apply to rest & export
+          Apply to all & export
         </button>
         <a v-if="exportHref" class="btn btn-sm full" :href="exportHref" download>⬇ Download results (.zip)</a>
         <p class="hint faint mono">
-          Scribble foreground & background on the selected images, then run.
-          LightGBM labels all images; "Apply to rest" predicts the stored
-          (unselected) images and exports them.
+          "Run segmentation" trains on the scribbles across your selected images
+          and previews masks on those. "Apply to all" then labels every uploaded
+          image and exports a zip — the paired masks for training & analysis.
         </p>
       </div>
 

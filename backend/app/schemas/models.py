@@ -46,6 +46,7 @@ class Box(BaseModel):
 class Scribble(BaseModel):
     label: int
     points: List[List[float]]   # [[x, y], ...]
+    width: Optional[float] = None  # brush width when drawn (rendering only)
 
 
 class AnnotationIn(BaseModel):
@@ -63,7 +64,7 @@ class SegmentJob(BaseModel):
     use_saved: bool = True
     # scope = "all" labels every image; "rest" labels only the unselected
     # images (the ones not used for annotation). export bundles a results zip.
-    scope: str = Field("all", pattern="^(all|rest|selected)$")
+    scope: str = Field("all", pattern="^(all|rest|selected|current)$")
     export: bool = False
 
 
@@ -115,6 +116,13 @@ class TrainJob(BaseModel):
     batch_size: int = 8
     lr: float = 1e-3
     input_size: int = 512
+    resume_model: Optional[str] = None   # continue training from this checkpoint
+    # dataset customization
+    image_ids: Optional[List[str]] = None    # hand-picked training subset (None = all masked)
+    include_extra: bool = True               # also use uploaded external image+mask pairs
+    val_fraction: float = 0.15
+    seed: int = 42
+    augment: Optional[Dict[str, bool]] = None  # {hflip, vflip, rot90, brightness}
 
 
 class InferenceJob(BaseModel):

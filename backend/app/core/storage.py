@@ -75,7 +75,7 @@ class ProjectStore:
             **kwargs,
         )
         base = self.path(pid)
-        for sub in ("images", "test", "annotations", "masks", "results", "models", "exports"):
+        for sub in ("images", "test", "annotations", "masks", "results", "models", "exports", "extra_pairs"):
             (base / sub).mkdir(parents=True, exist_ok=True)
         self._write_meta(project)
         return project
@@ -301,7 +301,106 @@ class ProjectStore:
                 return self.test_dir(project_id) / entry["path"]
         return None
 
+    # --------------------------------------------------- external train pairs
+    def extra_dir(self, project_id: str) -> Path:
+        d = self.path(project_id) / "extra_pairs"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def list_extra_pairs(self, project_id: str) -> List[Dict[str, Any]]:
+        manifest = self.extra_dir(project_id) / "_manifest.json"
+        if manifest.exists():
+            return json.loads(manifest.read_text())
+        return []
+
+    def add_extra_pair(self, project_id: str, img_name: str, img_bytes: bytes,
+                       mask_name: str, mask_bytes: bytes) -> Dict[str, Any]:
+        """Store an externally-supplied (image, label-mask) training pair."""
+        d = self.extra_dir(project_id)
+        pid = new_id("pair_")
+        ie = Path(img_name).suffix.lower() or ".png"
+        me = Path(mask_name).suffix.lower() or ".png"
+        (d / f"{pid}_img{ie}").write_bytes(img_bytes)
+        (d / f"{pid}_mask{me}").write_bytes(mask_bytes)
+        mpath = d / "_manifest.json"
+        manifest = json.loads(mpath.read_text()) if mpath.exists() else []
+        entry = {"id": pid, "image": f"{pid}_img{ie}", "mask": f"{pid}_mask{me}",
+                 "filename": img_name}
+        manifest.append(entry)
+        mpath.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+        return entry
+
+    def delete_extra_pair(self, project_id: str, pair_id: str) -> bool:
+        d = self.extra_dir(project_id)
+        mpath = d / "_manifest.json"
+        if not mpath.exists():
+            return False
+        manifest = json.loads(mpath.read_text())
+        keep, removed = [], None
+        for e in manifest:
+            if e["id"] == pair_id:
+                removed = e
+            else:
+                keep.append(e)
+        if removed:
+            for f in (removed["image"], removed["mask"]):
+                fp = d / f
+                if fp.exists():
+                    fp.unlink()
+            mpath.write_text(json.dumps(keep, indent=2, ensure_ascii=False))
+            return True
+        return False
+
+    def extra_pair_paths(self, project_id: str) -> List[tuple]:
+        """[(image_path, mask_path), ...] for every stored external pair."""
+        d = self.extra_dir(project_id)
+        return [(d / e["image"], d / e["mask"]) for e in self.list_extra_pairs(project_id)]
+
     # ------------------------------------------------------------- results
+    # ------------------------------------------------------------- models
+    def models_dir(self, project_id: str) -> Path:
+        d = self.path(project_id) / "models"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def list_models(self, project_id: str) -> List[Dict[str, Any]]:
+        """All trained model files in the project with light metadata.
+
+        Recognises the interactive LightGBM model, U-Net segmentation
+        checkpoints (.pt) and YOLO detection weights (.pt under a run dir).
+        """
+        out: List[Dict[str, Any]] = []
+        mdir = self.models_dir(project_id)
+        for p in sorted(mdir.glob("*")):
+            if p.is_dir():
+                continue
+            name = p.name
+            if name.endswith(".joblib"):
+                kind = "interactive"
+                meta = {}
+            elif name.endswith(".pt") or name.endswith(".pth"):
+                kind = "segmentation"
+                meta = {}
+                try:    # peek at checkpoint metadata without loading weights to GPU
+                    import torch
+                    ck = torch.load(p, map_location="cpu")
+                    meta = {"num_classes": ck.get("num_classes"),
+                            "input_size": ck.get("input_size"), "size": ck.get("size")}
+                except Exception:  # noqa: BLE001
+                    meta = {}
+            else:
+                continue
+            st = p.stat()
+            out.append({"name": name, "kind": kind, "size": st.st_size,
+                        "modified": st.st_mtime, **meta})
+        # YOLO weights live under models/<run>/weights/best.pt
+        for best in mdir.glob("*/weights/best.pt"):
+            st = best.stat()
+            out.append({"name": str(best.relative_to(mdir)), "kind": "detection",
+                        "size": st.st_size, "modified": st.st_mtime})
+        out.sort(key=lambda m: m["modified"], reverse=True)
+        return out
+
     def results_dir(self, project_id: str) -> Path:
         d = self.path(project_id) / "results"
         d.mkdir(parents=True, exist_ok=True)

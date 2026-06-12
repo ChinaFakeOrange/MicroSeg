@@ -15,7 +15,7 @@ const subtab = ref('morphometry')
 const err = ref(null)
 const volInfo = ref(null)
 
-const morph = reactive({ source: 'image', image_id: '', watershed: true, watershed_level: 0.1, min_area: 0, spacing: 1.0 })
+const morph = reactive({ source: 'image', image_id: '', target_label: 0, watershed: true, watershed_level: 0.1, min_area: 0, spacing: 1.0 })
 const perc = reactive({ source: 'volume', image_id: '', pore_label: 0, inlet_axis: 0, inlet_side: 'low', n_frames: 120 })
 
 const images = computed(() => store.images)
@@ -31,7 +31,7 @@ onMounted(async () => {
     morph.image_id = images.value[0].id
     perc.image_id = images.value[0].id
   }
-  if (classes.value.length) perc.pore_label = classes.value[0].id
+  if (classes.value.length) { perc.pore_label = classes.value[0].id; morph.target_label = classes.value[0].id }
   morph.spacing = store.current?.pixel_size_um || 1.0
   await refreshVolume()
 })
@@ -61,7 +61,7 @@ async function runMorph() {
     await dispatch('morphometry', props.id, {
       source: morph.source,
       image_ids: morph.source === 'volume' ? [] : (morph.image_id ? [morph.image_id] : images.value.map((i) => i.id)),
-      spacing: morph.spacing, watershed: morph.watershed,
+      spacing: morph.spacing, watershed: morph.watershed, target_label: morph.target_label,
       watershed_level: morph.watershed_level, min_area: morph.min_area,
     })
   } catch (e) { err.value = e.message }
@@ -135,6 +135,11 @@ function downloadCsv() {
           <img v-if="morphPreview && hasMasks" :src="morphPreview" alt="mask preview" />
           <p v-else class="faint mono small prev-empty">No mask yet — run segmentation in Annotate (and "Apply to rest" for the full stack).</p>
         </div>
+
+        <label class="lbl">Measure which class</label>
+        <select class="field" v-model.number="morph.target_label">
+          <option v-for="c in classes" :key="c.id" :value="c.id">{{ c.name }} ({{ c.id }})</option>
+        </select>
 
         <label class="check"><input type="checkbox" v-model="morph.watershed" /> <span>Watershed split touching objects</span></label>
         <div class="two">

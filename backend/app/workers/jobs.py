@@ -89,8 +89,9 @@ def interactive_segment(self, task_id: str, project_id: str, image_ids=None,
         if not targets:
             targets = all_images
 
-        # Build training data from every image's scribbles: anything passed in
-        # this request wins, otherwise fall back to the saved annotation on disk.
+        # Training always uses every saved scribble across the whole dataset —
+        # more labelled pixels = a better classifier. ``scope`` only decides which
+        # images get predicted (selected / rest / all / current).
         pairs = []
         for img_id in all_images:
             scribbles = strokes_by_image.get(img_id)
